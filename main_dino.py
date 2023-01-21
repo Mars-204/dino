@@ -18,6 +18,7 @@ import datetime
 import time
 import math
 import json
+import augmentations
 from pathlib import Path
 
 import numpy as np
@@ -33,7 +34,7 @@ from torchvision import models as torchvision_models
 import utils
 import vision_transformer as vits
 from vision_transformer import DINOHead
-
+# import ipdb;ipdb.set_trace()
 torchvision_archs = sorted(name for name in torchvision_models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(torchvision_models.__dict__[name]))
@@ -426,6 +427,10 @@ class DataAugmentationDINO(object):
             ),
             transforms.RandomGrayscale(p=0.2),
         ])
+        preprocess = transforms.Compose([transforms.ToTensor(),
+                        transforms.Normalize([0.485, 0.456, 0.406],[0.229, 0.224, 0.225] )])
+        augmix = Augmix(preprocess) # Defining augmix function for the transformation
+
         normalize = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
@@ -450,11 +455,12 @@ class DataAugmentationDINO(object):
         self.local_crops_number = local_crops_number
         self.local_transfo = transforms.Compose([
             transforms.RandomResizedCrop(96, scale=local_crops_scale, interpolation=Image.BICUBIC),
-            flip_and_color_jitter,
+            # flip_and_color_jitter,
+            augmix,
             utils.GaussianBlur(p=0.5),
             normalize,
         ])
-
+    
     def __call__(self, image):
         crops = []
         crops.append(self.global_transfo1(image))
@@ -462,6 +468,84 @@ class DataAugmentationDINO(object):
         for _ in range(self.local_crops_number):
             crops.append(self.local_transfo(image))
         return crops
+
+
+"""
+Implementation of AUGMIX and test corruption as implemented in AUGMIX paper
+
+"""
+
+
+class Augmix(object):
+
+    def __init__(self,prepocess) -> None:
+        pass
+
+    CORRUPTIONS = [
+        'gaussian_noise', 'shot_noise', 'impulse_noise', 'defocus_blur',
+        'glass_blur', 'motion_blur', 'zoom_blur', 'snow', 'frost', 'fog',
+        'brightness', 'contrast', 'elastic_transform', 'pixelate',
+        'jpeg_compression'
+    ]
+
+
+    def aug(image, preprocess):
+        """Perform AugMix augmentations and compute mixture.
+
+        Args:
+            image: PIL.Image input image
+            preprocess: Preprocessing function which should return a torch tensor.
+
+        Returns:
+            mixed: Augmented and mixed image.
+        """
+
+        try:
+            all_ops = config.all_ops
+            mixture_width = config.mixture_width
+            mixture_depth = config.mixture_depth
+            aug_severity = config.aug_severity
+
+        except Exception as e:
+            all_ops = True
+            mixture_depth = -1
+            mixture_width = 3
+            aug_severity = 3
+
+        aug_list = augmentations.augmentations
+        if all_ops:
+            aug_list = augmentations.augmentations_all
+
+        ws = np.float32(np.random.dirichlet([args.aug_prob_coeff] * args.mixture_width))
+        m = np.float32(np.random.beta(args.aug_prob_coeff, args.aug_prob_coeff))
+
+        mix = torch.zeros_like(preprocess(image))
+        for i in range(args.mixture_width):
+            image_aug = image.copy()
+            depth = args.mixture_depth if args.mixture_depth > 0 else np.random.randint(
+                1, 4)
+            for _ in range(depth):
+                op = np.random.choice(aug_list)
+                image_aug = op(image_aug, args.aug_severity)
+            # Preprocessing commutes since all coefficients are convex
+            mix += ws[i] * preprocess(image_aug)
+
+        mixed = (1 - m) * preprocess(image) + m * mix
+        return mixed
+
+# class AugMixDataset(torch.utils.data.Dataset):
+# """Dataset wrapper to perform AugMix augmentation."""
+
+# def __init__(self, dataset):
+#     self.dataset = dataset
+
+# def __getitem__(self, i):
+#     x, y = self.dataset[i]
+#     im_tuple = (x, aug(x),aug(x))
+#     return im_tuple, y
+
+# def __len__(self):
+#     return len(self.dataset)
 
 
 if __name__ == '__main__':
