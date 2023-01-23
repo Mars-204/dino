@@ -34,7 +34,7 @@ from torchvision import models as torchvision_models
 import utils
 import vision_transformer as vits
 from vision_transformer import DINOHead
-# import ipdb;ipdb.set_trace()
+
 torchvision_archs = sorted(name for name in torchvision_models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(torchvision_models.__dict__[name]))
@@ -118,7 +118,7 @@ def get_args_parser():
         Used for small local view cropping of multi-crop.""")
 
     # Misc
-    parser.add_argument('--data_path', default='/path/to/imagenet/train/', type=str,
+    parser.add_argument('--data_path', default='C:/MyData/Codes/DINO/dino/imagenette2/train', type=str,
         help='Please specify path to the ImageNet training data.')
     parser.add_argument('--output_dir', default=".", type=str, help='Path to save logs and checkpoints.')
     parser.add_argument('--saveckp_freq', default=20, type=int, help='Save checkpoint every x epochs.')
@@ -427,9 +427,8 @@ class DataAugmentationDINO(object):
             ),
             transforms.RandomGrayscale(p=0.2),
         ])
-        preprocess = transforms.Compose([transforms.ToTensor(),
-                        transforms.Normalize([0.485, 0.456, 0.406],[0.229, 0.224, 0.225] )])
-        augmix = Augmix(preprocess) # Defining augmix function for the transformation
+
+        augmix = Augmix() # Defining augmix for the transformation
 
         normalize = transforms.Compose([
             transforms.ToTensor(),
@@ -456,7 +455,7 @@ class DataAugmentationDINO(object):
         self.local_transfo = transforms.Compose([
             transforms.RandomResizedCrop(96, scale=local_crops_scale, interpolation=Image.BICUBIC),
             # flip_and_color_jitter,
-            augmix,
+            augmix.aug,
             utils.GaussianBlur(p=0.5),
             normalize,
         ])
@@ -478,7 +477,9 @@ Implementation of AUGMIX and test corruption as implemented in AUGMIX paper
 
 class Augmix(object):
 
-    def __init__(self,prepocess) -> None:
+    def __init__(self):
+        self.preprocess = transforms.Compose([transforms.ToTensor(),
+                        transforms.Normalize([0.485, 0.456, 0.406],[0.229, 0.224, 0.225] )])
         pass
 
     CORRUPTIONS = [
@@ -489,7 +490,7 @@ class Augmix(object):
     ]
 
 
-    def aug(image, preprocess):
+    def aug(self,image):
         """Perform AugMix augmentations and compute mixture.
 
         Args:
@@ -499,7 +500,7 @@ class Augmix(object):
         Returns:
             mixed: Augmented and mixed image.
         """
-
+        
         try:
             all_ops = config.all_ops
             mixture_width = config.mixture_width
@@ -516,21 +517,22 @@ class Augmix(object):
         if all_ops:
             aug_list = augmentations.augmentations_all
 
-        ws = np.float32(np.random.dirichlet([args.aug_prob_coeff] * args.mixture_width))
-        m = np.float32(np.random.beta(args.aug_prob_coeff, args.aug_prob_coeff))
+        ws = np.float32(np.random.dirichlet([1] * mixture_width))
+        m = np.float32(np.random.beta(1, 1))
 
-        mix = torch.zeros_like(preprocess(image))
-        for i in range(args.mixture_width):
+        mix = torch.zeros_like(self.preprocess(image))
+        for i in range(mixture_width):
             image_aug = image.copy()
-            depth = args.mixture_depth if args.mixture_depth > 0 else np.random.randint(
+            depth = mixture_depth if mixture_depth > 0 else np.random.randint(
                 1, 4)
             for _ in range(depth):
                 op = np.random.choice(aug_list)
-                image_aug = op(image_aug, args.aug_severity)
+                image_aug = op(image_aug, aug_severity)
             # Preprocessing commutes since all coefficients are convex
-            mix += ws[i] * preprocess(image_aug)
+            mix += ws[i] * self.preprocess(image_aug)
 
-        mixed = (1 - m) * preprocess(image) + m * mix
+        mixed = (1 - m) * self.preprocess(image) + m * mix
+        mixed = transforms.ToPILImage()(mixed)
         return mixed
 
 # class AugMixDataset(torch.utils.data.Dataset):

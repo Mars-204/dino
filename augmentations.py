@@ -18,7 +18,7 @@ import numpy as np
 from PIL import Image, ImageOps, ImageEnhance
 
 # ImageNet code should change this value
-IMAGE_SIZE = 32
+IMAGE_SIZE = 96
 
 
 def int_parameter(level, maxval):
