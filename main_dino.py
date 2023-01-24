@@ -19,6 +19,7 @@ import time
 import math
 import json
 import augmentations
+import tqdm
 from pathlib import Path
 
 import numpy as np
@@ -53,7 +54,7 @@ def get_args_parser():
         values leads to better performance but requires more memory. Applies only
         for ViTs (vit_tiny, vit_small and vit_base). If <16, we recommend disabling
         mixed precision training (--use_fp16 false) to avoid unstabilities.""")
-    parser.add_argument('--out_dim', default=65536, type=int, help="""Dimensionality of
+    parser.add_argument('--out_dim', default=1024, type=int, help="""Dimensionality of
         the DINO head output. For complex and large datasets large values (like 65k) work well.""")
     parser.add_argument('--norm_last_layer', default=True, type=utils.bool_flag,
         help="""Whether or not to weight normalize the last layer of the DINO head.
@@ -88,7 +89,7 @@ def get_args_parser():
     parser.add_argument('--clip_grad', type=float, default=3.0, help="""Maximal parameter
         gradient norm if using gradient clipping. Clipping with norm .3 ~ 1.0 can
         help optimization for larger ViT architectures. 0 for disabling.""")
-    parser.add_argument('--batch_size_per_gpu', default=64, type=int,
+    parser.add_argument('--batch_size_per_gpu', default=8, type=int,
         help='Per-GPU batch-size : number of distinct images loaded on one GPU.')
     parser.add_argument('--epochs', default=100, type=int, help='Number of epochs of training.')
     parser.add_argument('--freeze_last_layer', default=1, type=int, help="""Number of epochs
@@ -149,7 +150,7 @@ def train_dino(args):
         dataset,
         sampler=sampler,
         batch_size=args.batch_size_per_gpu,
-        num_workers=args.num_workers,
+        num_workers=int(0),
         pin_memory=True,
         drop_last=True,
     )
@@ -211,7 +212,6 @@ def train_dino(args):
     for p in teacher.parameters():
         p.requires_grad = False
     print(f"Student and Teacher are built: they are both {args.arch} network.")
-
     # ============ preparing loss ... ============
     dino_loss = DINOLoss(
         args.out_dim,
@@ -315,6 +315,7 @@ def train_one_epoch(student, teacher, teacher_without_ddp, dino_loss, data_loade
         # move images to gpu
         images = [im.cuda(non_blocking=True) for im in images]
         # teacher and student forward passes + compute dino loss
+        torch.cuda.empty_cache()
         with torch.cuda.amp.autocast(fp16_scaler is not None):
             teacher_output = teacher(images[:2])  # only the 2 global views pass through the teacher
             student_output = student(images)
@@ -453,8 +454,8 @@ class DataAugmentationDINO(object):
         # transformation for the local small crops
         self.local_crops_number = local_crops_number
         self.local_transfo = transforms.Compose([
-            transforms.RandomResizedCrop(96, scale=local_crops_scale, interpolation=Image.BICUBIC),
-            # flip_and_color_jitter,
+            transforms.RandomResizedCrop(224, scale=local_crops_scale, interpolation=Image.BICUBIC),
+            #flip_and_color_jitter,
             augmix.aug,
             utils.GaussianBlur(p=0.5),
             normalize,
